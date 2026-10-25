@@ -207,8 +207,13 @@ class BM6Connector:
                     await client.start_notify(
                         CHARACTERISTIC_UUID_NOTIFY, self._notify_callback
                     )
-                    while self._data is None or self._data.RealTime is None:
-                        await asyncio.sleep(0.5)
+                    # Bound the wait: without a timeout a missing notification keeps
+                    # the connection (and the proxy's connection slot) open forever.
+                    async with asyncio.timeout(BLEAK_CLIENT_TIMEOUT):
+                        while self._data is None or self._data.RealTime is None:
+                            if not client.is_connected:
+                                raise BM6DeviceError("Disconnected while waiting for data")
+                            await asyncio.sleep(0.5)
                     _LOGGER.debug("Finishing wait for data from BM6 at %s", self._address)
                     await client.stop_notify(CHARACTERISTIC_UUID_NOTIFY)
 
