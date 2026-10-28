@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Optional
 from bleak import BleakClient
 from bleak.backends.characteristic import BleakGATTCharacteristic
+from bleak_retry_connector import establish_connection
 from bleak.backends.scanner import AdvertisementData
 from Crypto.Cipher import AES
 
@@ -188,10 +189,16 @@ class BM6Connector:
                     scanner.advertisement, 
                     scanner.scanner
                 )
-                async with BleakClient(
-                    scanner.ble_device, 
-                    timeout=BLEAK_CLIENT_TIMEOUT
-                ) as client:
+                # establish_connection retries and cleans up aborted connection
+                # attempts on the proxy; a bare BleakClient leaves the ESP32 in a
+                # half-open state after a connect timeout (ESP_GATT_ERROR afterwards).
+                client = await establish_connection(
+                    BleakClient,
+                    scanner.ble_device,
+                    self._address,
+                    max_attempts=3,
+                )
+                async with client:
                     _LOGGER.debug(
                         "Write to BM6 at %s characteristic %s",
                         self._address,
@@ -231,16 +238,14 @@ class BM6Connector:
                     # _LOGGER.debug("Finishing wait for data from BM6 at %s", device.address)
                     # await client.stop_notify(CHARACTERISTIC_UUID_NOTIFY)
             except Exception as e:
-                e.add_note = f"Using scanner {scanner.scanner.name}"
+                e.add_note(f"Using scanner {scanner.scanner.name}")
                 exceptions.append(e)
                 _LOGGER.warning("Error while reading BM6 at %s: %s", self._address, e)
-            if not self._data.RealTime:
-                if len(exceptions) > 0:
-                    raise BM6DeviceError(
-                        f"Error while reading BM6 at {self._address}: {exceptions}"
-                    ) from exceptions[0]
-                else:
-                    raise BM6DeviceError(
-                        f"Error while reading BM6 at {self._address}"
-                    )
-        return self._data if self._data else None
+            # Stop after the first successful scanner, otherwise try the next one
+            if self._data.RealTime:
+                return self._data
+        if len(exceptions) > 0:
+            raise BM6DeviceError(
+                f"Error while reading BM6 at {self._address}: {exceptions}"
+            ) from exceptions[0]
+        raise BM6DeviceError(f"Error while reading BM6 at {self._address}")

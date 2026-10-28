@@ -2,6 +2,10 @@
 
 <!--next-version-placeholder-->
 
+## 1.0.5
+- Connections are now established with `bleak_retry_connector.establish_connection()` instead of a bare `BleakClient`. Aborted connection attempts are cleaned up on the ESPHome Bluetooth proxy, which otherwise ended up in `ESP_GATT_ERROR` and stopped scanning until restarted.
+- Fixed scanner fallback: the device is no longer read via every scanner on success, and the next scanner is tried when one fails.
+
 ## 1.0.4
 - Fixed BM6 devices no longer updating until the Bluetooth proxy was restarted. Waiting for the device response now times out, so a lost notification no longer keeps the connection (and a connection slot of an ESPHome Bluetooth proxy) open forever. The connection is released and retried on the next update.
 
