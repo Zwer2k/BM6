@@ -2,6 +2,11 @@
 
 <!--next-version-placeholder-->
 
+## 1.0.6
+- Subscribe to notifications before sending the request, so a fast reply from the BM6 is no longer lost (read timed out although the device answered).
+- `stop_notify` and `disconnect` are now bounded by a timeout and always run, so a hung cleanup no longer blocks the update or keeps a Bluetooth proxy connection slot occupied.
+- Bluetooth discovery only matches known BM6 manufacturer signatures (Rafciq/BM6#45), revised German translation (Rafciq/BM6#41), local brand icons (Rafciq/BM6#46).
+
 ## 1.0.5
 - Connections are now established with `bleak_retry_connector.establish_connection()` instead of a bare `BleakClient`. Aborted connection attempts are cleaned up on the ESPHome Bluetooth proxy, which otherwise ended up in `ESP_GATT_ERROR` and stopped scanning until restarted.
 - Fixed scanner fallback: the device is no longer read via every scanner on success, and the next scanner is tried when one fails.

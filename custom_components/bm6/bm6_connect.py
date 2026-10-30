@@ -22,6 +22,7 @@ from .const import (
     CHARACTERISTIC_UUID_WRITE,
     CRYPT_KEY,
     BLEAK_CLIENT_TIMEOUT,
+    BLEAK_CLEANUP_TIMEOUT,
     GATT_DATA_REALTIME,
     GATT_DATA_VERSION,
     GATT_NOTIFY_REALTIME_PREFIX,
@@ -177,6 +178,26 @@ class BM6Connector:
                 self._data.Firmware,
             )
 
+    async def _cleanup(self, client: BleakClient) -> None:
+        """Stop notifications and disconnect, each bounded by a timeout.
+
+        A hung stop_notify/disconnect on the proxy would otherwise block the
+        poll and keep the proxy's connection slot occupied.
+        """
+        for step, call in (
+            ("stop_notify", lambda: client.stop_notify(CHARACTERISTIC_UUID_NOTIFY)),
+            ("disconnect", client.disconnect),
+        ):
+            if not client.is_connected:
+                return
+            try:
+                async with asyncio.timeout(BLEAK_CLEANUP_TIMEOUT):
+                    await call()
+            except Exception as e:
+                _LOGGER.debug(
+                    "Error during %s of BM6 at %s: %s", step, self._address, e
+                )
+
     async def get_data(self) -> BM6Data:
         """Retrieve data from the BM6 device."""
         exceptions: list[Exception] = []
@@ -198,7 +219,13 @@ class BM6Connector:
                     self._address,
                     max_attempts=3,
                 )
-                async with client:
+                try:
+                    # Subscribe before sending the request, otherwise a fast reply
+                    # arrives before the subscription and is lost.
+                    self._data.RealTime = None
+                    await client.start_notify(
+                        CHARACTERISTIC_UUID_NOTIFY, self._notify_callback
+                    )
                     _LOGGER.debug(
                         "Write to BM6 at %s characteristic %s",
                         self._address,
@@ -210,10 +237,6 @@ class BM6Connector:
                         response=True,
                     )
                     _LOGGER.debug("Wait for data from BM6 at %s", self._address)
-                    self._data.RealTime = None
-                    await client.start_notify(
-                        CHARACTERISTIC_UUID_NOTIFY, self._notify_callback
-                    )
                     # Bound the wait: without a timeout a missing notification keeps
                     # the connection (and the proxy's connection slot) open forever.
                     async with asyncio.timeout(BLEAK_CLIENT_TIMEOUT):
@@ -222,7 +245,6 @@ class BM6Connector:
                                 raise BM6DeviceError("Disconnected while waiting for data")
                             await asyncio.sleep(0.5)
                     _LOGGER.debug("Finishing wait for data from BM6 at %s", self._address)
-                    await client.stop_notify(CHARACTERISTIC_UUID_NOTIFY)
 
                     # The following code is commented out but can be used to get firmware version data
                     # _LOGGER.debug("Write to BM6 at %s characteristic %s", device.address, CHARACTERISTIC_UUID_WRITE)
@@ -237,6 +259,8 @@ class BM6Connector:
                     #     await asyncio.sleep(0.5)
                     # _LOGGER.debug("Finishing wait for data from BM6 at %s", device.address)
                     # await client.stop_notify(CHARACTERISTIC_UUID_NOTIFY)
+                finally:
+                    await self._cleanup(client)
             except Exception as e:
                 e.add_note(f"Using scanner {scanner.scanner.name}")
                 exceptions.append(e)
