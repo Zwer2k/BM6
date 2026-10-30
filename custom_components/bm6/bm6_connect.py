@@ -164,7 +164,13 @@ class BM6Connector:
         message = self._decrypt(data).hex()
         _LOGGER.debug("Received data from BM6 at %s: %s", self._address, message)
         if message.startswith(GATT_NOTIFY_REALTIME_PREFIX):
-            self._data.RealTime = BM6RealTimeData(message)
+            real_time = BM6RealTimeData(message)
+            # Right after subscribing the BM6 sends an empty all-zero frame; the
+            # BM6 is powered by the battery itself, so 0 V is never a real reading.
+            if real_time.Voltage == 0:
+                _LOGGER.debug("Ignoring empty real-time frame from BM6 at %s", self._address)
+                return
+            self._data.RealTime = real_time
             _LOGGER.debug(
                 "Decoded real-time data from BM6 at %s: %s",
                 self._address,
@@ -226,24 +232,30 @@ class BM6Connector:
                     await client.start_notify(
                         CHARACTERISTIC_UUID_NOTIFY, self._notify_callback
                     )
-                    _LOGGER.debug(
-                        "Write to BM6 at %s characteristic %s",
-                        self._address,
-                        CHARACTERISTIC_UUID_WRITE,
-                    )
-                    await client.write_gatt_char(
-                        CHARACTERISTIC_UUID_WRITE,
-                        self._encrypt(bytearray.fromhex(GATT_DATA_REALTIME)),
-                        response=True,
-                    )
-                    _LOGGER.debug("Wait for data from BM6 at %s", self._address)
                     # Bound the wait: without a timeout a missing notification keeps
                     # the connection (and the proxy's connection slot) open forever.
                     async with asyncio.timeout(BLEAK_CLIENT_TIMEOUT):
-                        while self._data is None or self._data.RealTime is None:
-                            if not client.is_connected:
-                                raise BM6DeviceError("Disconnected while waiting for data")
-                            await asyncio.sleep(0.5)
+                        # Resend the request once if only the empty frame arrived
+                        for attempt in range(2):
+                            _LOGGER.debug(
+                                "Write to BM6 at %s characteristic %s",
+                                self._address,
+                                CHARACTERISTIC_UUID_WRITE,
+                            )
+                            await client.write_gatt_char(
+                                CHARACTERISTIC_UUID_WRITE,
+                                self._encrypt(bytearray.fromhex(GATT_DATA_REALTIME)),
+                                response=True,
+                            )
+                            _LOGGER.debug("Wait for data from BM6 at %s", self._address)
+                            for _ in range(4 if attempt == 0 else BLEAK_CLIENT_TIMEOUT * 2):
+                                if self._data.RealTime is not None:
+                                    break
+                                if not client.is_connected:
+                                    raise BM6DeviceError("Disconnected while waiting for data")
+                                await asyncio.sleep(0.5)
+                            if self._data.RealTime is not None:
+                                break
                     _LOGGER.debug("Finishing wait for data from BM6 at %s", self._address)
 
                     # The following code is commented out but can be used to get firmware version data

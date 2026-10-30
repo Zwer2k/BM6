@@ -2,6 +2,9 @@
 
 <!--next-version-placeholder-->
 
+## 1.0.7
+- Fixed sensors showing 0 values since 1.0.6: right after subscribing the BM6 sends an empty all-zero frame, which is now ignored. If only that frame arrives, the request is sent once more.
+
 ## 1.0.6
 - Subscribe to notifications before sending the request, so a fast reply from the BM6 is no longer lost (read timed out although the device answered).
 - `stop_notify` and `disconnect` are now bounded by a timeout and always run, so a hung cleanup no longer blocks the update or keeps a Bluetooth proxy connection slot occupied.
